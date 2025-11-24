@@ -1,0 +1,256 @@
+package app
+
+import (
+	"fmt"
+	"os/exec"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/adelapazborrero/music_download/internal/youtube"
+)
+
+// Init initializes the application
+func (m Model) Init() tea.Cmd {
+	if m.searchQuery != "" {
+		return youtube.SearchYouTube(m.searchQuery, m.searchLimit)
+	}
+	return nil
+}
+
+// Update handles all state updates
+func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.height = msg.Height
+		return m, nil
+
+	case tea.KeyMsg:
+		switch m.screen {
+		case ScreenMenu:
+			return m.updateMenu(msg)
+		case ScreenSearchInput:
+			return m.updateSearchInput(msg)
+		case ScreenURLInput:
+			return m.updateURLInput(msg)
+		case ScreenResults:
+			return m.updateResults(msg)
+		case ScreenDetails:
+			return m.updateDetails(msg)
+		}
+
+	case youtube.SearchCompleteMsg:
+		if msg.Err != nil {
+			m.err = msg.Err
+			return m, tea.Quit
+		}
+		m.results = msg.Results
+		m.screen = ScreenResults
+		return m, nil
+
+	case youtube.MetadataFetchedMsg:
+		if msg.Err != nil {
+			m.err = msg.Err
+			return m, tea.Quit
+		}
+		m.selected = msg.Metadata
+		m.screen = ScreenDetails
+
+		// Auto-start preview
+		url := fmt.Sprintf("https://www.youtube.com/watch?v=%s", msg.Metadata.ID)
+		cmd := exec.Command("mpv", "--no-video", "--ytdl-format=bestaudio", url)
+		m.previewCmd = cmd
+		go cmd.Run()
+		m.previewing = true
+		m.message = "Playing preview... (press 's' to stop)"
+
+		return m, nil
+
+	case youtube.DownloadCompleteMsg:
+		m.downloading = false
+		if msg.Err != nil {
+			m.message = fmt.Sprintf("Download failed: %v", msg.Err)
+		} else {
+			m.message = "Download complete!"
+		}
+		return m, tea.Quit
+	}
+
+	return m, nil
+}
+
+func (m Model) updateMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c", "q":
+		return m, tea.Quit
+	case "up", "k":
+		if m.menuCursor > 0 {
+			m.menuCursor--
+		}
+	case "down", "j":
+		if m.menuCursor < 1 {
+			m.menuCursor++
+		}
+	case "enter":
+		if m.menuCursor == 0 {
+			// Search music
+			m.screen = ScreenSearchInput
+			m.textInput = ""
+		} else {
+			// Download from URL
+			m.screen = ScreenURLInput
+			m.textInput = ""
+		}
+		return m, nil
+	}
+	return m, nil
+}
+
+func (m Model) updateSearchInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		m.screen = ScreenMenu
+		m.textInput = ""
+		return m, nil
+	case "enter":
+		if m.textInput != "" {
+			m.searchQuery = m.textInput
+			m.searchLimit = 20 // Reset to 20 for new search
+			m.screen = ScreenSearch
+			return m, youtube.SearchYouTube(m.searchQuery, m.searchLimit)
+		}
+		return m, nil
+	case "backspace":
+		if len(m.textInput) > 0 {
+			m.textInput = m.textInput[:len(m.textInput)-1]
+		}
+	default:
+		// Add typed character if it's a single character
+		if len(msg.String()) == 1 {
+			m.textInput += msg.String()
+		} else if msg.String() == "space" {
+			m.textInput += " "
+		}
+	}
+	return m, nil
+}
+
+func (m Model) updateURLInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		m.screen = ScreenMenu
+		m.textInput = ""
+		return m, nil
+	case "enter":
+		if m.textInput != "" {
+			videoID := youtube.ExtractVideoID(m.textInput)
+			if videoID == "" {
+				m.message = "Invalid YouTube URL"
+				return m, nil
+			}
+			m.fromURL = true
+			m.screen = ScreenLoading
+			return m, youtube.FetchMetadata(videoID)
+		}
+		return m, nil
+	case "backspace":
+		if len(m.textInput) > 0 {
+			m.textInput = m.textInput[:len(m.textInput)-1]
+		}
+	default:
+		// Add typed character if it's a single character
+		if len(msg.String()) == 1 {
+			m.textInput += msg.String()
+		}
+	}
+	return m, nil
+}
+
+func (m Model) updateResults(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	maxCursor := len(m.results) // +1 for "Load more" option
+
+	switch msg.String() {
+	case "ctrl+c", "q":
+		return m, tea.Quit
+	case "up", "k":
+		if m.cursor > 0 {
+			m.cursor--
+		}
+	case "down", "j":
+		if m.cursor < maxCursor {
+			m.cursor++
+		}
+	case "enter":
+		// Check if "Load more" option is selected
+		if m.cursor == len(m.results) {
+			// Load more results
+			m.searchLimit += 20
+			m.cursor = 0 // Reset cursor
+			m.screen = ScreenSearch
+			return m, youtube.SearchYouTube(m.searchQuery, m.searchLimit)
+		}
+
+		// Regular result selected
+		if len(m.results) > 0 && m.cursor < len(m.results) {
+			selected := m.results[m.cursor]
+			m.screen = ScreenLoading
+			return m, youtube.FetchMetadata(selected.ID)
+		}
+	}
+	return m, nil
+}
+
+func (m Model) updateDetails(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c", "q":
+		if m.previewing && m.previewCmd != nil {
+			m.previewCmd.Process.Kill()
+		}
+		return m, tea.Quit
+	case "esc":
+		if m.previewing && m.previewCmd != nil {
+			m.previewCmd.Process.Kill()
+			m.previewing = false
+			m.previewCmd = nil
+		}
+		if m.fromURL {
+			m.screen = ScreenMenu
+			m.fromURL = false
+		} else {
+			m.screen = ScreenResults
+		}
+		m.selected = nil
+		m.message = ""
+		return m, nil
+	case "p":
+		if !m.previewing {
+			url := fmt.Sprintf("https://www.youtube.com/watch?v=%s", m.selected.ID)
+			cmd := exec.Command("mpv", "--no-video", "--ytdl-format=bestaudio", url)
+			m.previewCmd = cmd
+			go cmd.Run()
+			m.previewing = true
+			m.message = "Playing preview... (press 's' to stop)"
+		}
+		return m, nil
+	case "s":
+		if m.previewing && m.previewCmd != nil {
+			m.previewCmd.Process.Kill()
+			m.previewing = false
+			m.previewCmd = nil
+			m.message = "Preview stopped"
+		}
+		return m, nil
+	case "d":
+		if m.previewing && m.previewCmd != nil {
+			m.previewCmd.Process.Kill()
+			m.previewing = false
+			m.previewCmd = nil
+		}
+		m.downloading = true
+		m.screen = ScreenDownloading
+		return m, youtube.DownloadVideo(m.selected.ID, m.selected.Title)
+	}
+	return m, nil
+}

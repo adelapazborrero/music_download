@@ -1,4 +1,4 @@
-module music-download
+module github.com/adelapazborrero/music_download
 
 go 1.25.0
 
