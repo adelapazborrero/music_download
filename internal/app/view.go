@@ -108,14 +108,29 @@ func detailsView(m Model) string {
 		return "Loading details..."
 	}
 
-	duration := utils.FormatDuration(m.selected.Duration)
-	views := utils.FormatNumber(m.selected.ViewCount)
-
 	s := ui.TitleStyle.Render("Video Details") + "\n\n"
 	s += fmt.Sprintf("  Title:    %s\n", m.selected.Title)
-	s += fmt.Sprintf("  Channel:  %s\n", m.selected.Channel)
-	s += fmt.Sprintf("  Duration: %s\n", duration)
-	s += fmt.Sprintf("  Views:    %s\n", views)
+
+	// Show "Loading..." for fields not yet available
+	if m.selected.Channel != "" {
+		s += fmt.Sprintf("  Channel:  %s\n", m.selected.Channel)
+	} else {
+		s += "  Channel:  Loading...\n"
+	}
+
+	if m.selected.Duration > 0 {
+		duration := utils.FormatDuration(m.selected.Duration)
+		s += fmt.Sprintf("  Duration: %s\n", duration)
+	} else {
+		s += "  Duration: Loading...\n"
+	}
+
+	if m.selected.ViewCount > 0 {
+		views := utils.FormatNumber(m.selected.ViewCount)
+		s += fmt.Sprintf("  Views:    %s\n", views)
+	} else {
+		s += "  Views:    Loading...\n"
+	}
 
 	if m.message != "" {
 		s += "\n  " + m.message + "\n"
@@ -133,7 +148,11 @@ func detailsView(m Model) string {
 
 func downloadingView(m Model) string {
 	s := ui.TitleStyle.Render("Downloading") + "\n\n"
-	s += fmt.Sprintf("  Downloading: %s\n", m.selected.Title)
-	s += "  Extracting high-quality MP3 with cover art...\n"
+	s += fmt.Sprintf("  Title:    %s\n", m.selected.Title)
+	s += "\n"
+	s += "  Status:   Downloading and converting to MP3...\n"
+	s += "  Quality:  High-quality audio with cover art\n"
+	s += "\n"
+	s += "  Please wait, this may take a moment...\n"
 	return s
 }

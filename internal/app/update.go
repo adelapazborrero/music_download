@@ -51,27 +51,35 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = msg.Err
 			return m, tea.Quit
 		}
+
+		// Update with full metadata
 		m.selected = msg.Metadata
 		m.screen = ScreenDetails
 
-		// Auto-start preview
-		url := fmt.Sprintf("https://www.youtube.com/watch?v=%s", msg.Metadata.ID)
-		cmd := exec.Command("mpv", "--no-video", "--ytdl-format=bestaudio", url)
-		m.previewCmd = cmd
-		go cmd.Run()
-		m.previewing = true
-		m.message = "Playing preview... (press 's' to stop)"
+		// Only start preview if not already previewing (e.g., from URL input)
+		// When coming from search results, preview is already started
+		if !m.previewing {
+			// Auto-start preview (for URL input flow)
+			url := fmt.Sprintf("https://www.youtube.com/watch?v=%s", msg.Metadata.ID)
+			cmd := exec.Command("mpv", "--no-video", "--ytdl-format=bestaudio", url)
+			m.previewCmd = cmd
+			go cmd.Run()
+			m.previewing = true
+			m.message = "Playing preview... (press 's' to stop)"
+		}
 
 		return m, nil
 
 	case youtube.DownloadCompleteMsg:
 		m.downloading = false
 		if msg.Err != nil {
-			m.message = fmt.Sprintf("Download failed: %v", msg.Err)
+			m.message = "Download failed: " + msg.Err.Error()
 		} else {
-			m.message = "Download complete!"
+			m.message = "✓ Download complete!"
 		}
-		return m, tea.Quit
+		// Return to details screen instead of quitting
+		m.screen = ScreenDetails
+		return m, nil
 	}
 
 	return m, nil
@@ -195,7 +203,23 @@ func (m Model) updateResults(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Regular result selected
 		if len(m.results) > 0 && m.cursor < len(m.results) {
 			selected := m.results[m.cursor]
-			m.screen = ScreenLoading
+
+			// Create partial metadata from search result
+			m.selected = &youtube.VideoMetadata{
+				Title: selected.Title,
+				ID:    selected.ID,
+			}
+
+			// Start preview immediately
+			url := fmt.Sprintf("https://www.youtube.com/watch?v=%s", selected.ID)
+			cmd := exec.Command("mpv", "--no-video", "--ytdl-format=bestaudio", url)
+			m.previewCmd = cmd
+			go cmd.Run()
+			m.previewing = true
+			m.message = "Playing preview... (press 's' to stop)"
+
+			// Go to details screen and fetch full metadata in background
+			m.screen = ScreenDetails
 			return m, youtube.FetchMetadata(selected.ID)
 		}
 	}

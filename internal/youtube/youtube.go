@@ -3,7 +3,6 @@ package youtube
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 
@@ -106,12 +105,14 @@ func DownloadVideo(videoID, title string) tea.Cmd {
 			"--audio-quality", "0",
 			"--embed-thumbnail",
 			"--add-metadata",
+			"--quiet", // Suppress yt-dlp output to avoid UI interference
+			"--progress",
 			"-o", "%(title)s.%(ext)s",
 			url,
 		)
 
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
+		// Don't redirect output to avoid breaking the TUI
+		// cmd.Stdout and cmd.Stderr are nil by default, which discards output
 
 		if err := cmd.Run(); err != nil {
 			return DownloadCompleteMsg{Err: fmt.Errorf("download failed: %w", err)}
