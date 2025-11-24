@@ -99,7 +99,7 @@ func resultsView(m Model) string {
 		s += fmt.Sprintf("\n%s%s\n", cursor, loadMoreText)
 	}
 
-	s += ui.HelpStyle.Render("\nup/k up • down/j down • enter select • q quit")
+	s += ui.HelpStyle.Render("\nup/k up • down/j down • enter select • esc menu • q quit")
 	return s
 }
 

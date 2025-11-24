@@ -182,6 +182,14 @@ func (m Model) updateResults(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "q":
 		return m, tea.Quit
+	case "esc":
+		// Go back to main menu
+		m.screen = ScreenMenu
+		m.results = nil
+		m.cursor = 0
+		m.searchQuery = ""
+		m.searchLimit = 20
+		return m, nil
 	case "up", "k":
 		if m.cursor > 0 {
 			m.cursor--
