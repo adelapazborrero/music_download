@@ -30,7 +30,10 @@ type VideoMetadata struct {
 type Screen int
 
 const (
-	ScreenSearch Screen = iota
+	ScreenMenu Screen = iota
+	ScreenSearchInput
+	ScreenURLInput
+	ScreenSearch
 	ScreenResults
 	ScreenLoading
 	ScreenDetails
@@ -42,6 +45,8 @@ type model struct {
 	searchQuery   string
 	results       []SearchResult
 	cursor        int
+	menuCursor    int
+	textInput     string
 	selected      *VideoMetadata
 	action        string
 	err           error
@@ -50,6 +55,7 @@ type model struct {
 	height        int
 	previewing    bool
 	previewCmd    *exec.Cmd
+	fromURL       bool
 }
 
 type searchCompleteMsg struct {
@@ -67,9 +73,14 @@ type downloadCompleteMsg struct {
 }
 
 func initialModel(query string) model {
+	if query != "" {
+		return model{
+			screen:      ScreenSearch,
+			searchQuery: query,
+		}
+	}
 	return model{
-		screen:      ScreenSearch,
-		searchQuery: query,
+		screen: ScreenMenu,
 	}
 }
 
@@ -88,6 +99,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch m.screen {
+		case ScreenMenu:
+			return m.updateMenu(msg)
+		case ScreenSearchInput:
+			return m.updateSearchInput(msg)
+		case ScreenURLInput:
+			return m.updateURLInput(msg)
 		case ScreenResults:
 			return m.updateResults(msg)
 		case ScreenDetails:
@@ -122,6 +139,96 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 
+	return m, nil
+}
+
+func (m model) updateMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c", "q":
+		return m, tea.Quit
+	case "up", "k":
+		if m.menuCursor > 0 {
+			m.menuCursor--
+		}
+	case "down", "j":
+		if m.menuCursor < 1 {
+			m.menuCursor++
+		}
+	case "enter":
+		if m.menuCursor == 0 {
+			// Search music
+			m.screen = ScreenSearchInput
+			m.textInput = ""
+		} else {
+			// Download from URL
+			m.screen = ScreenURLInput
+			m.textInput = ""
+		}
+		return m, nil
+	}
+	return m, nil
+}
+
+func (m model) updateSearchInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		m.screen = ScreenMenu
+		m.textInput = ""
+		return m, nil
+	case "enter":
+		if m.textInput != "" {
+			m.searchQuery = m.textInput
+			m.screen = ScreenSearch
+			return m, searchYouTube(m.searchQuery)
+		}
+		return m, nil
+	case "backspace":
+		if len(m.textInput) > 0 {
+			m.textInput = m.textInput[:len(m.textInput)-1]
+		}
+	default:
+		// Add typed character if it's a single character
+		if len(msg.String()) == 1 {
+			m.textInput += msg.String()
+		} else if msg.String() == "space" {
+			m.textInput += " "
+		}
+	}
+	return m, nil
+}
+
+func (m model) updateURLInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		m.screen = ScreenMenu
+		m.textInput = ""
+		return m, nil
+	case "enter":
+		if m.textInput != "" {
+			videoID := extractVideoID(m.textInput)
+			if videoID == "" {
+				m.message = "Invalid YouTube URL"
+				return m, nil
+			}
+			m.fromURL = true
+			m.screen = ScreenLoading
+			return m, fetchMetadata(videoID)
+		}
+		return m, nil
+	case "backspace":
+		if len(m.textInput) > 0 {
+			m.textInput = m.textInput[:len(m.textInput)-1]
+		}
+	default:
+		// Add typed character if it's a single character
+		if len(msg.String()) == 1 {
+			m.textInput += msg.String()
+		}
+	}
 	return m, nil
 }
 
@@ -160,7 +267,12 @@ func (m model) updateDetails(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.previewing = false
 			m.previewCmd = nil
 		}
-		m.screen = ScreenResults
+		if m.fromURL {
+			m.screen = ScreenMenu
+			m.fromURL = false
+		} else {
+			m.screen = ScreenResults
+		}
 		m.selected = nil
 		m.message = ""
 		return m, nil
@@ -197,6 +309,12 @@ func (m model) updateDetails(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m model) View() string {
 	switch m.screen {
+	case ScreenMenu:
+		return menuView(m)
+	case ScreenSearchInput:
+		return searchInputView(m)
+	case ScreenURLInput:
+		return urlInputView(m)
 	case ScreenSearch:
 		return searchingView(m.searchQuery)
 	case ScreenResults:
@@ -236,6 +354,44 @@ var (
 			Foreground(lipgloss.Color("#FF0000")).
 			Bold(true)
 )
+
+func menuView(m model) string {
+	s := titleStyle.Render("Music Download") + "\n\n"
+	s += "  What would you like to do?\n\n"
+
+	options := []string{"Search music", "Download from URL"}
+	for i, option := range options {
+		cursor := "  "
+		if m.menuCursor == i {
+			cursor = "> "
+			s += selectedStyle.Render(fmt.Sprintf("%s%s", cursor, option)) + "\n"
+		} else {
+			s += fmt.Sprintf("%s%s\n", cursor, option)
+		}
+	}
+
+	s += helpStyle.Render("\nup/k up • down/j down • enter select • q quit")
+	return s
+}
+
+func searchInputView(m model) string {
+	s := titleStyle.Render("Search Music") + "\n\n"
+	s += "  Enter search terms:\n\n"
+	s += fmt.Sprintf("  > %s_\n", m.textInput)
+	s += helpStyle.Render("\nenter submit • esc back • ctrl+c quit")
+	return s
+}
+
+func urlInputView(m model) string {
+	s := titleStyle.Render("Download from URL") + "\n\n"
+	s += "  Enter YouTube URL:\n\n"
+	s += fmt.Sprintf("  > %s_\n", m.textInput)
+	if m.message != "" {
+		s += "\n  " + m.message + "\n"
+	}
+	s += helpStyle.Render("\nenter submit • esc back • ctrl+c quit")
+	return s
+}
 
 func searchingView(query string) string {
 	return fmt.Sprintf("\nSearching YouTube for: %s\n\n", query)
@@ -399,6 +555,59 @@ func formatNumber(n int64) string {
 	return result.String()
 }
 
+func extractVideoID(input string) string {
+	input = strings.TrimSpace(input)
+
+	// If it's already just an ID (11 characters)
+	if len(input) == 11 && !strings.Contains(input, "/") && !strings.Contains(input, ".") {
+		return input
+	}
+
+	// Handle various YouTube URL formats
+	// https://www.youtube.com/watch?v=VIDEO_ID
+	// https://youtu.be/VIDEO_ID
+	// https://www.youtube.com/embed/VIDEO_ID
+	// https://m.youtube.com/watch?v=VIDEO_ID
+
+	if strings.Contains(input, "youtube.com/watch?v=") {
+		parts := strings.Split(input, "v=")
+		if len(parts) >= 2 {
+			videoID := parts[1]
+			// Remove any additional parameters
+			if idx := strings.Index(videoID, "&"); idx != -1 {
+				videoID = videoID[:idx]
+			}
+			return videoID
+		}
+	}
+
+	if strings.Contains(input, "youtu.be/") {
+		parts := strings.Split(input, "youtu.be/")
+		if len(parts) >= 2 {
+			videoID := parts[1]
+			// Remove any additional parameters
+			if idx := strings.Index(videoID, "?"); idx != -1 {
+				videoID = videoID[:idx]
+			}
+			return videoID
+		}
+	}
+
+	if strings.Contains(input, "youtube.com/embed/") {
+		parts := strings.Split(input, "embed/")
+		if len(parts) >= 2 {
+			videoID := parts[1]
+			// Remove any additional parameters
+			if idx := strings.Index(videoID, "?"); idx != -1 {
+				videoID = videoID[:idx]
+			}
+			return videoID
+		}
+	}
+
+	return ""
+}
+
 func checkDependencies() error {
 	required := []string{"yt-dlp", "mpv", "ffmpeg"}
 	for _, cmd := range required {
@@ -415,12 +624,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	if len(os.Args) < 2 {
-		fmt.Println("Usage: music-download <search terms>")
-		os.Exit(1)
+	var query string
+	if len(os.Args) >= 2 {
+		// Old behavior: command line arguments
+		query = strings.Join(os.Args[1:], " ")
 	}
-
-	query := strings.Join(os.Args[1:], " ")
+	// If no arguments, query will be empty and menu will be shown
 
 	p := tea.NewProgram(initialModel(query))
 	m, err := p.Run()
