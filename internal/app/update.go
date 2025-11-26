@@ -4,14 +4,23 @@ import (
 	"fmt"
 	"os/exec"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/adelapazborrero/music_download/internal/youtube"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // Init initializes the application
 func (m Model) Init() tea.Cmd {
+	var cmds []tea.Cmd
+
+	// Enable bracketed paste for clipboard paste support
+	cmds = append(cmds, tea.EnableBracketedPaste)
+
 	if m.searchQuery != "" {
-		return youtube.SearchYouTube(m.searchQuery, m.searchLimit)
+		cmds = append(cmds, youtube.SearchYouTube(m.searchQuery, m.searchLimit))
+	}
+
+	if len(cmds) > 0 {
+		return tea.Batch(cmds...)
 	}
 	return nil
 }
@@ -31,6 +40,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateSearchInput(msg)
 		case ScreenURLInput:
 			return m.updateURLInput(msg)
+		case ScreenPlaylistInput:
+			return m.updatePlaylistInput(msg)
 		case ScreenResults:
 			return m.updateResults(msg)
 		case ScreenDetails:
@@ -80,6 +91,53 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Return to details screen instead of quitting
 		m.screen = ScreenDetails
 		return m, nil
+
+	case youtube.PlaylistFetchedMsg:
+		if msg.Err != nil {
+			m.err = msg.Err
+			return m, tea.Quit
+		}
+		m.playlistItems = msg.Items
+		m.playlistTotal = len(msg.Items)
+		m.playlistSuccess = 0
+		m.playlistFailed = 0
+		m.playlistFailedItems = []string{}
+		m.message = fmt.Sprintf("Found %d songs in playlist. Starting download...", len(msg.Items))
+		m.screen = ScreenPlaylistDownloading
+		return m, youtube.DownloadPlaylist(msg.Items)
+
+	case youtube.PlaylistDownloadProgressMsg:
+		// Update progress and counts
+		m.playlistProgress = msg.Current
+		if msg.Success {
+			m.playlistSuccess++
+			m.message = fmt.Sprintf("✓ Downloaded: %s (%d/%d)", msg.Title, msg.Current, msg.Total)
+		} else {
+			m.playlistFailed++
+			failedMsg := fmt.Sprintf("%s: %s", msg.Title, msg.Error)
+			m.playlistFailedItems = append(m.playlistFailedItems, failedMsg)
+			m.message = fmt.Sprintf("✗ Failed: %s (%d/%d)", msg.Title, msg.Current, msg.Total)
+		}
+		// Continue downloading next item with accumulated counts
+		return m, youtube.DownloadNextPlaylistItem(m.playlistItems, msg.Current, m.playlistSuccess, m.playlistFailed, m.playlistFailedItems)
+
+	case youtube.PlaylistDownloadCompleteMsg:
+		if msg.Err != nil {
+			m.message = fmt.Sprintf("Playlist download failed: %s", msg.Err.Error())
+		} else {
+			m.message = fmt.Sprintf("✓ Playlist download complete! Success: %d, Failed: %d", msg.Success, msg.Failed)
+			if msg.Failed > 0 && len(msg.FailedItems) > 0 {
+				m.message += "\n\nFailed downloads:\n"
+				for _, item := range msg.FailedItems {
+					m.message += fmt.Sprintf("  • %s\n", item)
+				}
+			}
+		}
+		m.screen = ScreenMenu
+		m.playlistItems = nil
+		m.playlistProgress = 0
+		m.playlistTotal = 0
+		return m, nil
 	}
 
 	return m, nil
@@ -94,7 +152,7 @@ func (m Model) updateMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.menuCursor--
 		}
 	case "down", "j":
-		if m.menuCursor < 1 {
+		if m.menuCursor < 2 {
 			m.menuCursor++
 		}
 	case "enter":
@@ -102,9 +160,13 @@ func (m Model) updateMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// Search music
 			m.screen = ScreenSearchInput
 			m.textInput = ""
-		} else {
+		} else if m.menuCursor == 1 {
 			// Download from URL
 			m.screen = ScreenURLInput
+			m.textInput = ""
+		} else {
+			// Download from playlist
+			m.screen = ScreenPlaylistInput
 			m.textInput = ""
 		}
 		return m, nil
@@ -113,6 +175,12 @@ func (m Model) updateMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateSearchInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Handle paste events
+	if msg.Paste {
+		m.textInput += msg.String()
+		return m, nil
+	}
+
 	switch msg.String() {
 	case "ctrl+c":
 		return m, tea.Quit
@@ -144,6 +212,12 @@ func (m Model) updateSearchInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateURLInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Handle paste events
+	if msg.Paste {
+		m.textInput += msg.String()
+		return m, nil
+	}
+
 	switch msg.String() {
 	case "ctrl+c":
 		return m, tea.Quit
@@ -229,6 +303,45 @@ func (m Model) updateResults(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// Go to details screen and fetch full metadata in background
 			m.screen = ScreenDetails
 			return m, youtube.FetchMetadata(selected.ID)
+		}
+	}
+	return m, nil
+}
+
+func (m Model) updatePlaylistInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Handle paste events
+	if msg.Paste {
+		m.textInput += msg.String()
+		return m, nil
+	}
+
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		m.screen = ScreenMenu
+		m.textInput = ""
+		return m, nil
+	case "enter":
+		if m.textInput != "" {
+			playlistID := youtube.ExtractPlaylistID(m.textInput)
+			if playlistID == "" {
+				m.message = "Invalid YouTube playlist URL"
+				return m, nil
+			}
+			m.screen = ScreenLoading
+			m.message = "Fetching playlist..."
+			return m, youtube.FetchPlaylistItems(playlistID)
+		}
+		return m, nil
+	case "backspace":
+		if len(m.textInput) > 0 {
+			m.textInput = m.textInput[:len(m.textInput)-1]
+		}
+	default:
+		// Add typed character if it's a single character
+		if len(msg.String()) == 1 {
+			m.textInput += msg.String()
 		}
 	}
 	return m, nil

@@ -13,31 +13,39 @@ const (
 	ScreenMenu Screen = iota
 	ScreenSearchInput
 	ScreenURLInput
+	ScreenPlaylistInput
 	ScreenSearch
 	ScreenResults
 	ScreenLoading
 	ScreenDetails
 	ScreenDownloading
+	ScreenPlaylistDownloading
 )
 
 // Model holds the application state
 type Model struct {
-	screen        Screen
-	searchQuery   string
-	results       []youtube.SearchResult
-	cursor        int
-	menuCursor    int
-	textInput     string
-	selected      *youtube.VideoMetadata
-	action        string
-	err           error
-	downloading   bool
-	message       string
-	height        int
-	previewing    bool
-	previewCmd    *exec.Cmd
-	fromURL       bool
-	searchLimit   int
+	screen              Screen
+	searchQuery         string
+	results             []youtube.SearchResult
+	cursor              int
+	menuCursor          int
+	textInput           string
+	selected            *youtube.VideoMetadata
+	action              string
+	err                 error
+	downloading         bool
+	message             string
+	height              int
+	previewing          bool
+	previewCmd          *exec.Cmd
+	fromURL             bool
+	searchLimit         int
+	playlistItems       []youtube.SearchResult
+	playlistProgress    int
+	playlistTotal       int
+	playlistSuccess     int
+	playlistFailed      int
+	playlistFailedItems []string
 }
 
 // Getters for private fields (needed by main.go)

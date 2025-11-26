@@ -39,6 +39,26 @@ type DownloadCompleteMsg struct {
 	Err error
 }
 
+type PlaylistFetchedMsg struct {
+	Items []SearchResult
+	Err   error
+}
+
+type PlaylistDownloadProgressMsg struct {
+	Current int
+	Total   int
+	Title   string
+	Success bool
+	Error   string
+}
+
+type PlaylistDownloadCompleteMsg struct {
+	Success     int
+	Failed      int
+	FailedItems []string
+	Err         error
+}
+
 // SearchYouTube performs a YouTube search with the given query and limit
 func SearchYouTube(query string, limit int) tea.Cmd {
 	return func() tea.Msg {
@@ -185,4 +205,118 @@ func CheckDependencies() error {
 		}
 	}
 	return nil
+}
+
+// ExtractPlaylistID extracts the playlist ID from various YouTube URL formats
+func ExtractPlaylistID(input string) string {
+	input = strings.TrimSpace(input)
+
+	// Look for list= parameter in URL
+	if strings.Contains(input, "list=") {
+		parts := strings.Split(input, "list=")
+		if len(parts) >= 2 {
+			playlistID := parts[1]
+			// Remove any additional parameters
+			if idx := strings.Index(playlistID, "&"); idx != -1 {
+				playlistID = playlistID[:idx]
+			}
+			return playlistID
+		}
+	}
+
+	return ""
+}
+
+// FetchPlaylistItems retrieves all items from a YouTube playlist
+func FetchPlaylistItems(playlistID string) tea.Cmd {
+	return func() tea.Msg {
+		url := fmt.Sprintf("https://www.youtube.com/playlist?list=%s", playlistID)
+		cmd := exec.Command("yt-dlp",
+			"--flat-playlist",
+			"--print", "%(title)s|||%(id)s",
+			url,
+		)
+
+		output, err := cmd.Output()
+		if err != nil {
+			return PlaylistFetchedMsg{Err: fmt.Errorf("failed to fetch playlist: %w", err)}
+		}
+
+		lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+		items := make([]SearchResult, 0, len(lines))
+
+		for _, line := range lines {
+			parts := strings.Split(line, "|||")
+			if len(parts) == 2 {
+				items = append(items, SearchResult{
+					Title: parts[0],
+					ID:    parts[1],
+				})
+			}
+		}
+
+		if len(items) == 0 {
+			return PlaylistFetchedMsg{Err: fmt.Errorf("no items found in playlist")}
+		}
+
+		return PlaylistFetchedMsg{Items: items}
+	}
+}
+
+// DownloadPlaylist initiates playlist download by downloading the first item
+func DownloadPlaylist(items []SearchResult) tea.Cmd {
+	return DownloadNextPlaylistItem(items, 0, 0, 0, []string{})
+}
+
+// DownloadNextPlaylistItem downloads a single playlist item and returns a command to continue
+func DownloadNextPlaylistItem(items []SearchResult, current, success, failed int, failedItems []string) tea.Cmd {
+	return func() tea.Msg {
+		// Check if we're done
+		if current >= len(items) {
+			return PlaylistDownloadCompleteMsg{
+				Success:     success,
+				Failed:      failed,
+				FailedItems: failedItems,
+			}
+		}
+
+		// Download current item
+		item := items[current]
+		url := fmt.Sprintf("https://www.youtube.com/watch?v=%s", item.ID)
+		cmd := exec.Command("yt-dlp",
+			"-f", "bestaudio",
+			"--extract-audio",
+			"--audio-format", "mp3",
+			"--audio-quality", "0",
+			"--embed-thumbnail",
+			"--add-metadata",
+			"--quiet",
+			"--no-warnings",
+			"-o", "%(title)s.%(ext)s",
+			url,
+		)
+
+		err := cmd.Run()
+		var errMsg string
+		var downloadSuccess bool
+
+		if err != nil {
+			failed++
+			errMsg = err.Error()
+			failedItems = append(failedItems, fmt.Sprintf("%s: %s", item.Title, errMsg))
+			downloadSuccess = false
+		} else {
+			success++
+			downloadSuccess = true
+		}
+
+		// Send progress message
+		return PlaylistDownloadProgressMsg{
+			Current: current + 1,
+			Total:   len(items),
+			Title:   item.Title,
+			Success: downloadSuccess,
+			Error:   errMsg,
+		}
+	}
 }

@@ -16,6 +16,8 @@ func (m Model) View() string {
 		return searchInputView(m)
 	case ScreenURLInput:
 		return urlInputView(m)
+	case ScreenPlaylistInput:
+		return playlistInputView(m)
 	case ScreenSearch:
 		return searchingView(m.searchQuery)
 	case ScreenResults:
@@ -26,6 +28,8 @@ func (m Model) View() string {
 		return detailsView(m)
 	case ScreenDownloading:
 		return downloadingView(m)
+	case ScreenPlaylistDownloading:
+		return playlistDownloadingView(m)
 	}
 	return ""
 }
@@ -34,7 +38,7 @@ func menuView(m Model) string {
 	s := ui.TitleStyle.Render("Music Download") + "\n\n"
 	s += "  What would you like to do?\n\n"
 
-	options := []string{"Search music", "Download from URL"}
+	options := []string{"Search music", "Download from URL", "Download from playlist"}
 	for i, option := range options {
 		cursor := "  "
 		if m.menuCursor == i {
@@ -154,5 +158,35 @@ func downloadingView(m Model) string {
 	s += "  Quality:  High-quality audio with cover art\n"
 	s += "\n"
 	s += "  Please wait, this may take a moment...\n"
+	return s
+}
+
+func playlistInputView(m Model) string {
+	s := ui.TitleStyle.Render("Download from Playlist") + "\n\n"
+	s += "  Enter YouTube playlist URL:\n\n"
+	s += fmt.Sprintf("  > %s_\n", m.textInput)
+	if m.message != "" {
+		s += "\n  " + m.message + "\n"
+	}
+	s += ui.HelpStyle.Render("\nenter submit • esc back • ctrl+c quit")
+	return s
+}
+
+func playlistDownloadingView(m Model) string {
+	s := ui.TitleStyle.Render("Downloading Playlist") + "\n\n"
+	if m.playlistTotal > 0 {
+		s += fmt.Sprintf("  Total songs:    %d\n", m.playlistTotal)
+		s += fmt.Sprintf("  Progress:       %d/%d\n", m.playlistProgress, m.playlistTotal)
+		s += fmt.Sprintf("  Success:        %d\n", m.playlistSuccess)
+		s += fmt.Sprintf("  Failed:         %d\n", m.playlistFailed)
+	}
+	s += "\n"
+	s += "  Status:   Downloading songs as MP3...\n"
+	s += "  Quality:  High-quality audio with cover art\n"
+	s += "\n"
+	if m.message != "" {
+		s += "  " + m.message + "\n\n"
+	}
+	s += "  Please wait, this may take several minutes...\n"
 	return s
 }

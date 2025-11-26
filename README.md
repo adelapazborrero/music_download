@@ -8,6 +8,7 @@ A modern, interactive CLI tool for searching, previewing, and downloading music 
 - 🎵 **Auto-Preview** - Instant audio preview when selecting songs
 - ⬇️ **High-Quality Downloads** - MP3 with embedded thumbnails and metadata
 - 🌐 **URL Support** - Download directly from YouTube URLs
+- 📋 **Playlist Support** - Download entire playlists with one command
 - 📊 **Video Details** - View title, channel, duration, and view count
 - 🔄 **Load More** - Dynamically load additional search results
 - 🎨 **Modern TUI** - Beautiful terminal interface with Bubbletea
@@ -71,9 +72,10 @@ Start the application without arguments to access the main menu:
 music-download
 ```
 
-You'll be presented with two options:
+You'll be presented with three options:
 1. **Search music** - Search YouTube and browse results
 2. **Download from URL** - Directly download from a YouTube URL
+3. **Download from playlist** - Download all songs from a YouTube playlist
 
 ### Command-Line Mode
 
@@ -120,6 +122,8 @@ music-download "lofi hip hop beats"
 
 ## Supported URL Formats
 
+### Single Video URLs
+
 The tool accepts various YouTube URL formats:
 
 ```
@@ -129,6 +133,17 @@ https://www.youtube.com/embed/VIDEO_ID
 https://m.youtube.com/watch?v=VIDEO_ID
 VIDEO_ID (just the ID)
 ```
+
+### Playlist URLs
+
+The tool accepts YouTube playlist URLs in these formats:
+
+```
+https://www.youtube.com/playlist?list=PLAYLIST_ID
+https://www.youtube.com/watch?v=VIDEO_ID&list=PLAYLIST_ID&index=N
+```
+
+**Note:** When downloading a playlist, all songs will be downloaded sequentially to the current directory. For large playlists, this may take considerable time.
 
 ## Project Structure
 
@@ -218,6 +233,13 @@ make clean
    - Embeds thumbnail as cover art
    - Adds metadata (title, artist, etc.)
    - Saves to current directory
+
+4. **Playlist Download:**
+   - Enter playlist URL
+   - Playlist items are fetched using yt-dlp
+   - All songs downloaded sequentially
+   - Progress shown during download
+   - Final summary shows success/failure count
 
 ## Output Files
 
